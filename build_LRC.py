@@ -2,19 +2,16 @@
 # Create the Large Radiosonde Collection archive from IGRA2 archive data
 # Created 14 July 2024 by Sam Gardner <samuel.gardner@ttu.edu>
 
-from datetime import datetime as dt, timedelta
-import tarfile
 from io import BytesIO
 from zipfile import ZipFile
-from os import path, listdir
 import numpy as np
 import polars as pl
-from time import sleep
 
 from dask.distributed import Client
 
 
 def parse_zipped_text(z, txt):
+    from datetime import datetime as dt, timedelta
     from metpy.units import units
     from metpy import calc as mpcalc
     # Each zip file represents a single station, which has many launches.
@@ -144,7 +141,11 @@ def parse_zipped_text(z, txt):
                 elapsed_hours = pl.Series(df['elapsed_time']//100)
                 elapsed_minutes = pl.Series(df['elapsed_time']%100)
                 if release_time is not np.nan:
-                    rec_valid_times = pl.Series([release_time + timedelta(hours=hours, minutes=minutes) for hours, minutes in zip(elapsed_hours, elapsed_minutes)])
+                    try:
+                        rec_valid_times = pl.Series([release_time + timedelta(hours=hours, minutes=minutes) for hours, minutes in zip(elapsed_hours, elapsed_minutes)])
+                    except Exception as e:
+                        df.write_csv('error.csv')
+                        raise e
                 else:
                     rec_valid_times = pl.Series([launch_valid_time + timedelta(hours=hours, minutes=minutes) for hours, minutes in zip(elapsed_hours, elapsed_minutes)])
             else:
@@ -170,25 +171,27 @@ def parse_zipped_text(z, txt):
 
 
 def get_soundings_from_tar(t, dask_client):
-    all_txts = []
     # Each tarfile has many zip files inside, each representing a different station
+    all_dfs = []
     for member in t:
+        all_txts = []
         if member.name.endswith('.zip'):
             zip_bytes = t.extractfile(member).read()
             zp = BytesIO(zip_bytes)
             with ZipFile(zp) as z:
                 txts_to_read = [txt for txt in z.namelist() if txt.endswith('.txt')]
                 all_txts.extend(txts_to_read)
-    all_dfs = dask_client.map(parse_zipped_text, [zip_bytes]*len(all_txts), txts_to_read)
+            all_dfs.extend(dask_client.map(parse_zipped_text, [zip_bytes]*len(all_txts), txts_to_read))
     # Concatenate all dataframes
     tar_df = dask_client.submit(pl.concat, all_dfs).result()
     print(tar_df)
     return tar_df
 
 if __name__ == '__main__':
+    import tarfile
+    from os import path, listdir
     dask_client = Client()
     print(dask_client.dashboard_link)
-    sleep(5)
     # Create container for final archive
     all_dfs = []
     # Read in data from all tar files in input_data/
