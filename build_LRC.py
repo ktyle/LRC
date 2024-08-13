@@ -120,8 +120,8 @@ def parse_zipped_text(z, txt):
                         df = df.drop(this_col_name)
             
             # Drop unused columns
-            df = df.drop('pflag', 'zflag', 'tflag')
-            df = df.drop('major_level_indicator', 'minor_level_indicator', 'dewpoint_depression')
+            df = df.drop('pflag', 'zflag', 'tflag', strict=False)
+            df = df.drop('major_level_indicator', 'minor_level_indicator', 'dewpoint_depression', strict=False)
 
             # Calculate the launch valid time
             launch_valid_time = dt(valid_year, valid_month, valid_day, valid_hour)
