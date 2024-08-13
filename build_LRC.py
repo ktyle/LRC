@@ -9,14 +9,17 @@ from zipfile import ZipFile
 from os import path, listdir
 import numpy as np
 import polars as pl
+from time import sleep
 
-from metpy import calc as mpcalc
-from metpy.units import units
+from dask.distributed import Client
 
 
 def parse_zipped_text(z, txt):
+    from metpy.units import units
+    from metpy import calc as mpcalc
     # Each zip file represents a single station, which has many launches.
     all_dfs = []
+    z = ZipFile(BytesIO(z))
     with z.open(txt) as this_txt:
         this_txt = this_txt.readlines()
         lines = [line.decode('utf-8') for line in this_txt]
@@ -162,33 +165,30 @@ def parse_zipped_text(z, txt):
                 )
             all_dfs.append(df)
     # Concatenate all dataframes
-    this_station_df = all_dfs[0]
-    for i in range(1, len(all_dfs)):
-        this_station_df = this_station_df.append(all_dfs[i])
+    this_station_df = pl.concat(all_dfs)
     return this_station_df
 
 
-def get_soundings_from_tar(t):
+def get_soundings_from_tar(t, dask_client):
+    all_txts = []
     # Each tarfile has many zip files inside, each representing a different station
-    all_dfs = []
     for member in t:
         if member.name.endswith('.zip'):
-            # extract the zip to a bytesIO object
-            zp = BytesIO(t.extractfile(member).read())
+            zip_bytes = t.extractfile(member).read()
+            zp = BytesIO(zip_bytes)
             with ZipFile(zp) as z:
-                # There *should* only be one text file in each zip
-                for txt in z.namelist():
-                    if txt.endswith('.txt'):
-                        # parse each zip into a dataframe
-                        this_member_df = parse_zipped_text(z, txt)
-                        all_dfs.append(this_member_df)
+                txts_to_read = [txt for txt in z.namelist() if txt.endswith('.txt')]
+                all_txts.extend(txts_to_read)
+    all_dfs = dask_client.map(parse_zipped_text, [zip_bytes]*len(all_txts), txts_to_read)
     # Concatenate all dataframes
-    tar_df = all_dfs[0]
-    for i in range(1, len(all_dfs)):
-        tar_df = tar_df.append(all_dfs[i])
+    tar_df = dask_client.submit(pl.concat, all_dfs).result()
+    print(tar_df)
     return tar_df
 
 if __name__ == '__main__':
+    dask_client = Client()
+    print(dask_client.dashboard_link)
+    sleep(5)
     # Create container for final archive
     all_dfs = []
     # Read in data from all tar files in input_data/
@@ -199,7 +199,7 @@ if __name__ == '__main__':
         input_filepath = path.join(input_path, in_filename)
         # Create dataframe from the tar file
         with tarfile.open(input_filepath) as t:
-            this_tar_df = get_soundings_from_tar(t)
+            this_tar_df = get_soundings_from_tar(t, dask_client)
         all_dfs.append(this_tar_df)
     # Concatenate all dataframes
     all_radiosondes = all_dfs[0]
