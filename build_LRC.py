@@ -190,7 +190,7 @@ def get_soundings_from_tar(t, dask_client):
 if __name__ == '__main__':
     import tarfile
     from os import path, listdir
-    dask_client = Client('tcp://127.0.0.1:54705')
+    dask_client = Client('tcp://127.0.0.1:8786')
     print(dask_client.dashboard_link)
     # Create container for final archive
     all_dfs = []
