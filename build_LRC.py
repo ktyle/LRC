@@ -101,13 +101,10 @@ def parse_zipped_text(z, txt):
             )
 
             # Try to find the surface record and record the launch altitude above MSL
-            launch_msl = df.filter(pl.col('minor_level_indicator') == 1)['geopotential_height'].to_numpy()
-            if len(launch_msl) == 1:
-                launch_msl = launch_msl[0]
-            elif len(launch_msl) == 0:
-                launch_msl = np.nan
+            if df['minor_level_indicator'][0] == 1:
+                launch_msl = df['geopotential_height'][0]
             else:
-                raise ValueError('More than one surface record found')
+                launch_msl = np.nan
             # Calculate the launch valid time
             launch_valid_time = dt(valid_year, valid_month, valid_day, valid_hour)
             # Some soundings have a specific release time included
