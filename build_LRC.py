@@ -109,8 +109,13 @@ def parse_zipped_text(z, txt):
             else:
                 raise ValueError('More than one surface record found')
 
-            # Drop columns that are all NaN or empty strings
+            # Drop columns that are all NaN or empty strings, except for the required columns
+            required_columns = ['site', 'launch_lat', 'launch_lon', 'launch_msl', 'launch_valid_time', 'release_time', 'record_valid',
+                                'air_pressure', 'geopotential_height', 'air_temperature',  'dew_point_temperature', 'wind_from_direction', 'wind_speed',
+                                'eastward_wind', 'northward_wind']
             for this_col_name in df.columns:
+                if this_col_name in required_columns:
+                    continue
                 this_col = df[this_col_name]
                 if this_col.dtype == pl.Float64:
                     if this_col.is_nan().all():
@@ -138,8 +143,6 @@ def parse_zipped_text(z, txt):
 
             # Some soundings have the exact time of each record.
             if 'elapsed_time' in df.columns:
-                elapsed_hours = pl.Series(df['elapsed_time']//100)
-                elapsed_minutes = pl.Series(df['elapsed_time']%100)
                 if release_time is not np.nan:
                     df = df.with_columns(
                                         pl.when(pl.col('elapsed_time').is_not_nan())
@@ -163,7 +166,7 @@ def parse_zipped_text(z, txt):
                     df = df.with_columns(
                         record_valid=np.full(num_rec, launch_valid_time, dtype=object).astype('datetime64[us]')
                     )
-                    
+            df = df.drop('elapsed_time', strict=False)
             # Add our new columns to the overall dataset
             df = df.with_columns(
                     site=np.full(num_rec, station),
@@ -173,6 +176,7 @@ def parse_zipped_text(z, txt):
                     launch_lon=np.full(num_rec, launch_lon),
                     launch_msl=np.full(num_rec, launch_msl),
                 )
+            df = df.select(required_columns)
             all_dfs.append(df)
     # Concatenate all dataframes
     this_station_df = pl.concat(all_dfs)
