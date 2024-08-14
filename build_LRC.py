@@ -64,10 +64,10 @@ def parse_zipped_text(z, txt):
             names_and_locs = dict(zip(names, starts_and_lengths))
             # datatypes also from the documentation above.
             types = [pl.UInt8, pl.UInt8, pl.Int32, pl.Int32, pl.String, pl.Int32, pl.String, pl.Int32, pl.String, pl.Int32, pl.Int32, pl.Int32, pl.Int32]
-            # Split the row into columns and drop the original column representing the entire row.
+            # Split the row into columns
             df = df.with_columns(
                 [pl.col('row').str.slice(*start_and_length).str.replace_all(' ', '').alias(name) for name, start_and_length in names_and_locs.items()]
-            ).drop('row')
+            )
             # Cast the columns to the correct datatypes
             df = df.with_columns(
                 [pl.col(name).cast(dtype) for name, dtype in zip(names, types)]
@@ -108,26 +108,6 @@ def parse_zipped_text(z, txt):
                 launch_msl = np.nan
             else:
                 raise ValueError('More than one surface record found')
-
-            # Drop columns that are all NaN or empty strings, except for the required columns
-            required_columns = ['site', 'launch_lat', 'launch_lon', 'launch_msl', 'launch_valid_time', 'release_time', 'record_valid',
-                                'air_pressure', 'geopotential_height', 'air_temperature',  'dew_point_temperature', 'wind_from_direction', 'wind_speed',
-                                'eastward_wind', 'northward_wind']
-            for this_col_name in df.columns:
-                if this_col_name in required_columns:
-                    continue
-                this_col = df[this_col_name]
-                if this_col.dtype == pl.Float64:
-                    if this_col.is_nan().all():
-                        df = df.drop(this_col_name)
-                elif this_col.dtype == pl.String:
-                    if (this_col == '').all():
-                        df = df.drop(this_col_name)
-            
-            # Drop unused columns
-            df = df.drop('pflag', 'zflag', 'tflag', strict=False)
-            df = df.drop('major_level_indicator', 'minor_level_indicator', 'dewpoint_depression', strict=False)
-
             # Calculate the launch valid time
             launch_valid_time = dt(valid_year, valid_month, valid_day, valid_hour)
             # Some soundings have a specific release time included
@@ -166,7 +146,6 @@ def parse_zipped_text(z, txt):
                     df = df.with_columns(
                         record_valid=np.full(num_rec, launch_valid_time, dtype=object).astype('datetime64[us]')
                     )
-            df = df.drop('elapsed_time', strict=False)
             # Add our new columns to the overall dataset
             df = df.with_columns(
                     site=np.full(num_rec, station),
@@ -176,6 +155,9 @@ def parse_zipped_text(z, txt):
                     launch_lon=np.full(num_rec, launch_lon),
                     launch_msl=np.full(num_rec, launch_msl),
                 )
+            required_columns = ['site', 'launch_lat', 'launch_lon', 'launch_msl', 'launch_valid_time', 'release_time', 'record_valid',
+                                'air_pressure', 'geopotential_height', 'air_temperature',  'dew_point_temperature', 'wind_from_direction', 'wind_speed',
+                                'eastward_wind', 'northward_wind']
             df = df.select(required_columns)
             all_dfs.append(df)
     # Concatenate all dataframes
@@ -187,7 +169,11 @@ def get_soundings_from_tar(t, dask_client):
     # Each tarfile has many zip files inside, each representing a different station
     all_dfs = []
     print(len(t.getmembers()))
+    i = 0
     for member in t:
+        i += 1
+        if i == 36:
+            break
         all_txts = []
         if member.name.endswith('.zip'):
             zip_bytes = t.extractfile(member).read()
