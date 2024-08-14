@@ -7,13 +7,12 @@ from zipfile import ZipFile
 import numpy as np
 import polars as pl
 
-from dask.distributed import Client
+from dask.distributed import Client, print
+
 
 
 def parse_zipped_text(z, txt):
     from datetime import datetime as dt, timedelta
-    from metpy.units import units
-    from metpy import calc as mpcalc
     # Each zip file represents a single station, which has many launches.
     all_dfs = []
     z = ZipFile(BytesIO(z))
@@ -93,11 +92,12 @@ def parse_zipped_text(z, txt):
             )
 
             # Calculate wind components
-            u, v = mpcalc.wind_components(df['wind_speed'].to_numpy() * units('m/s'), df['wind_from_direction'].to_numpy() * units('degrees'))
-
+            dir_rad = np.deg2rad(df['wind_from_direction'].to_numpy()) 
+            u = -df['wind_speed']*np.sin(dir_rad)
+            v = -df['wind_speed']*np.cos(dir_rad)
             df = df.with_columns(
-                eastward_wind=u.magnitude,
-                northward_wind=v.magnitude
+                eastward_wind=u,
+                northward_wind=v
             )
 
             # Try to find the surface record and record the launch altitude above MSL
@@ -186,6 +186,7 @@ def parse_zipped_text(z, txt):
 def get_soundings_from_tar(t, dask_client):
     # Each tarfile has many zip files inside, each representing a different station
     all_dfs = []
+    print(len(t.getmembers()))
     for member in t:
         all_txts = []
         if member.name.endswith('.zip'):
@@ -197,7 +198,6 @@ def get_soundings_from_tar(t, dask_client):
             all_dfs.extend(dask_client.map(parse_zipped_text, [zip_bytes]*len(all_txts), txts_to_read))
     # Concatenate all dataframes
     tar_df = dask_client.submit(pl.concat, all_dfs).result()
-    print(tar_df)
     return tar_df
 
 if __name__ == '__main__':
