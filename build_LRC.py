@@ -141,28 +141,37 @@ def parse_zipped_text(z, txt):
                 elapsed_hours = pl.Series(df['elapsed_time']//100)
                 elapsed_minutes = pl.Series(df['elapsed_time']%100)
                 if release_time is not np.nan:
-                    try:
-                        rec_valid_times = pl.Series([release_time + timedelta(hours=hours, minutes=minutes) for hours, minutes in zip(elapsed_hours, elapsed_minutes)])
-                    except Exception as e:
-                        df.write_csv('error.csv')
-                        raise e
+                    df = df.with_columns(
+                                        pl.when(pl.col('elapsed_time').is_not_nan())
+                                        .then(release_time + pl.duration(hours=pl.col('elapsed_time')//100, minutes=pl.col('elapsed_time')%100))
+                                        .otherwise(pl.lit(None))
+                                        .alias('record_valid')
+                                        )
                 else:
-                    rec_valid_times = pl.Series([launch_valid_time + timedelta(hours=hours, minutes=minutes) for hours, minutes in zip(elapsed_hours, elapsed_minutes)])
+                    df = df.with_columns(
+                                        pl.when(pl.col('elapsed_time').is_not_nan())
+                                        .then(launch_valid_time + pl.duration(hours=pl.col('elapsed_time')//100, minutes=pl.col('elapsed_time')%100))
+                                        .otherwise(pl.lit(None))
+                                        .alias('record_valid')
+                                        )
             else:
                 if release_time is not np.nan:
-                    rec_valid_times = np.full(num_rec, release_time, dtype=object)
+                    df = df.with_columns(
+                        record_valid=np.full(num_rec, release_time, dtype=object).astype('datetime64[us]')
+                    )
                 else:
-                    rec_valid_times = np.full(num_rec, launch_valid_time, dtype=object)
+                    df = df.with_columns(
+                        record_valid=np.full(num_rec, launch_valid_time, dtype=object).astype('datetime64[us]')
+                    )
                     
             # Add our new columns to the overall dataset
             df = df.with_columns(
                     site=np.full(num_rec, station),
-                    launch_valid_time=np.full(num_rec, launch_valid_time),
-                    release_time=np.full(num_rec, release_time),
+                    launch_valid_time=np.full(num_rec, launch_valid_time).astype('datetime64[us]'),
+                    release_time=np.full(num_rec, release_time).astype('datetime64[us]'),
                     launch_lat=np.full(num_rec, launch_lat),
                     launch_lon=np.full(num_rec, launch_lon),
                     launch_msl=np.full(num_rec, launch_msl),
-                    record_valid=rec_valid_times
                 )
             all_dfs.append(df)
     # Concatenate all dataframes
