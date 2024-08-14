@@ -8,6 +8,7 @@ import numpy as np
 import polars as pl
 
 from dask.distributed import Client, print
+import dask.dataframe as dd
 
 
 
@@ -167,30 +168,32 @@ def parse_zipped_text(z, txt):
 
 
     # Concatenate all dataframes
-    this_station_df = pl.concat(all_dfs)
+    this_station_df = pl.concat(all_dfs).to_pandas()
     return this_station_df
 
 
 def get_soundings_from_tar(t, dask_client):
     # Each tarfile has many zip files inside, each representing a different station
     all_dfs = []
-    i = 0
     for member in t:
-        all_txts = []
         if member.name.endswith('.zip'):
             zip_bytes = t.extractfile(member).read()
             zp = BytesIO(zip_bytes)
             with ZipFile(zp) as z:
-                txts_to_read = [txt for txt in z.namelist() if txt.endswith('.txt')]
-                all_txts.extend(txts_to_read)
-            all_dfs.extend(dask_client.map(parse_zipped_text, [zip_bytes]*len(all_txts), txts_to_read))
+                for txt in z.namelist():
+                    if txt.endswith('.txt'):
+                        station_df = dask_client.submit(parse_zipped_text, zip_bytes, txt)
+                        all_dfs.append(station_df)
     # Concatenate all dataframes
-    tar_df = dask_client.submit(pl.concat, all_dfs).result()
+    template_df = dd.read_parquet('template.parquet')
+    tar_df = dd.from_delayed(all_dfs, meta=template_df)
     return tar_df
+
 
 if __name__ == '__main__':
     import tarfile
     from os import path, listdir
+    from shutil import rmtree
     dask_client = Client('tcp://127.0.0.1:8786')
     print(dask_client.dashboard_link)
     # Create container for final archive
@@ -206,8 +209,10 @@ if __name__ == '__main__':
             this_tar_df = get_soundings_from_tar(t, dask_client)
         all_dfs.append(this_tar_df)
     # Concatenate all dataframes
-    all_radiosondes = all_dfs[0]
-    for i in range(1, len(all_dfs)):
-        all_radiosondes = all_radiosondes.append(all_dfs[i])
+    all_radiosondes = dd.concat(all_dfs)
     # Write to parquet
-    all_radiosondes.write_parquet('radiosondes.parquet')
+    all_radiosondes.to_parquet('tempdata.parquet')
+    # Combine all into a single file
+    lrc = pl.read_parquet('tempdata.parquet')
+    lrc.write_parquet('radiosondes.parquet')
+    rmtree('tempdata.parquet')
