@@ -46,7 +46,6 @@ def igra2_text_to_polars(header_line, data_lines):
                         (40, 5), # col 41 through 45, WDIR
                         (46, 6), # col 47 through 51, WSPD
                         ]
-    names_and_locs = dict(zip(names, starts_and_lengths))
     # datatypes also from the documentation above.
     types = [pl.UInt8, pl.UInt8, pl.Int32, pl.Int32, pl.String, pl.Int32, pl.String, pl.Int32, pl.String, pl.Int32, pl.Int32, pl.Int32, pl.Int32]
     # Split the row into columns
@@ -58,21 +57,15 @@ def igra2_text_to_polars(header_line, data_lines):
         [pl.when(pl.col(name).is_in([-9999, -8888])).then(np.nan).otherwise(pl.col(name)).alias(name) for name in names if df[name].dtype != pl.String]
     )
     # Data is delivered in pascals, tenths of degrees celsius, and tenths of meters per second.
-    df = df.with_columns(
-        air_pressure=pl.col('air_pressure')/100,
-        air_temperature=pl.col('air_temperature')/10,
-        wind_speed=pl.col('wind_speed')/10,
-    )
+    press=df['air_pressure']/100
+    temps = df['air_temperature']/10
+    wind_speed=df['wind_speed']/10
+    dew_point_temperature=(df['air_temperature'] - df['dewpoint_depression']/10).alias('dew_point_temperature')
     # Calculate wind components
     dir_rad = np.deg2rad(df['wind_from_direction'].to_numpy())
     u = -df['wind_speed']*np.sin(dir_rad)
     v = -df['wind_speed']*np.cos(dir_rad)
     # Calculate dew point from dewpoint depression
-    df = df.with_columns(
-        dew_point_temperature=(pl.col('air_temperature') - pl.col('dewpoint_depression')/10),
-        eastward_wind=u,
-        northward_wind=v
-    )
 
     # Try to find the surface record and record the launch altitude above MSL
     if df['minor_level_indicator'][0] == 1:
@@ -91,43 +84,35 @@ def igra2_text_to_polars(header_line, data_lines):
             release_time = release_time - timedelta(days=1)
     else:
         release_time = np.nan
+    launch_valid_time = np.full(num_rec, launch_valid_time).astype('datetime64[ms]')
+    release_time = np.full(num_rec, release_time).astype('datetime64[ms]')
 
     # Some soundings have the exact time of each record.
-    if 'elapsed_time' in df.columns:
-        if release_time is not np.nan:
-            df = df.with_columns(
-                                record_valid=pl.when(pl.col('elapsed_time').is_not_nan())
-                                .then(release_time + pl.duration(hours=pl.col('elapsed_time')//100, minutes=pl.col('elapsed_time')%100))
-                                .otherwise(pl.lit(None))
-                                )
-        else:
-            df = df.with_columns(
-                                record_valid=pl.when(pl.col('elapsed_time').is_not_nan())
-                                .then(launch_valid_time + pl.duration(hours=pl.col('elapsed_time')//100, minutes=pl.col('elapsed_time')%100))
-                                .otherwise(pl.lit(None))
-                                )
+    elapsed_hours = df['elapsed_time'].to_numpy()//100
+    elapsed_minutes = df['elapsed_time'].to_numpy()%100
+    elapsed_time = elapsed_hours.astype('timedelta64[h]') + elapsed_minutes.astype('timedelta64[m]')
+    if release_time[0] is not np.nan:
+        record_valid = release_time[0] + elapsed_time
     else:
-        if release_time is not np.nan:
-            df = df.with_columns(
-                record_valid=np.full(num_rec, release_time, dtype=object).astype('datetime64[us]')
-            )
-        else:
-            df = df.with_columns(
-                record_valid=np.full(num_rec, launch_valid_time, dtype=object).astype('datetime64[us]')
-            )
+        record_valid = launch_valid_time[0] + elapsed_time
     # Add our new columns to the overall dataset
-    df = df.with_columns(
-            site=np.full(num_rec, station),
-            launch_valid_time=np.full(num_rec, launch_valid_time).astype('datetime64[us]'),
-            release_time=np.full(num_rec, release_time).astype('datetime64[us]'),
-            launch_lat=np.full(num_rec, launch_lat),
-            launch_lon=np.full(num_rec, launch_lon),
-            launch_msl=np.full(num_rec, launch_msl),
-        )
-    required_columns = ['site', 'launch_lat', 'launch_lon', 'launch_msl', 'launch_valid_time', 'release_time', 'record_valid',
-                        'air_pressure', 'geopotential_height', 'air_temperature',  'dew_point_temperature', 'wind_from_direction', 'wind_speed',
-                        'eastward_wind', 'northward_wind']
-    df = df.select(required_columns)
+    df = pl.DataFrame([
+            pl.Series('site', np.full(num_rec, station)),
+            pl.Series('launch_lat', np.full(num_rec, launch_lat)),
+            pl.Series('launch_lon', np.full(num_rec, launch_lon)),
+            pl.Series('launch_msl', np.full(num_rec, launch_msl)),
+            pl.Series('launch_valid_time', launch_valid_time),
+            pl.Series('release_time', release_time),
+            pl.Series('record_valid', record_valid.astype('datetime64[ms]')),
+            press,
+            df['geopotential_height'],
+            temps,
+            dew_point_temperature,
+            df['wind_from_direction'],
+            wind_speed,
+            pl.Series('eastward_wind', u),
+            pl.Series('northward_wind', v)
+        ])
     return df
 
 
