@@ -73,7 +73,10 @@ def igra2_text_to_polars(header_line, data_lines):
     else:
         launch_msl = np.nan
     # Calculate the launch valid time
+    if valid_hour == 99:
+        valid_hour = 0
     launch_valid_time = dt(valid_year, valid_month, valid_day, valid_hour)
+
     # Some soundings have a specific release time included
     if release_hhmm != 9999:
         if release_hhmm % 100 == 99:
@@ -171,7 +174,7 @@ if __name__ == '__main__':
     # Create container for final archive
     all_dfs = []
     # Read in data from all tar files in input_data/
-    input_path = 'input_data2/'
+    input_path = 'input_data/'
     for in_filename in sorted(listdir(input_path)):
         if not in_filename.endswith('.tar'):
             continue
