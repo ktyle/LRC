@@ -20,8 +20,8 @@ def igra2_text_to_polars(header_line, data_lines):
     valid_day = int(header_line[21:23])
     valid_hour = int(header_line[24:26])
     release_hhmm = int(header_line[27:31])
-    pressure_source = header_line[37:45]
-    nonpressure_source = header_line[46:54]
+    # pressure_source = header_line[37:45]
+    # nonpressure_source = header_line[46:54]
     launch_lat = float(header_line[55:62])/10000
     launch_lon = float(header_line[64:71])/10000
     # Create a dataframe from the data lines. Currently the dataframe only has one column, representing each record of the data
@@ -51,11 +51,7 @@ def igra2_text_to_polars(header_line, data_lines):
     types = [pl.UInt8, pl.UInt8, pl.Int32, pl.Int32, pl.String, pl.Int32, pl.String, pl.Int32, pl.String, pl.Int32, pl.Int32, pl.Int32, pl.Int32]
     # Split the row into columns
     df = df.with_columns(
-        [pl.col('row').str.slice(*start_and_length).str.replace_all(' ', '').alias(name) for name, start_and_length in names_and_locs.items()]
-    )
-    # Cast the columns to the correct datatypes
-    df = df.with_columns(
-        [pl.col(name).cast(dtype) for name, dtype in zip(names, types)]
+        [pl.col('row').str.slice(*start_and_length).str.replace_all(' ', '').cast(type).alias(name) for name, start_and_length, type in zip(names, starts_and_lengths, types)]
     )
     # Replace missing values with NaN
     df = df.with_columns(
@@ -63,24 +59,17 @@ def igra2_text_to_polars(header_line, data_lines):
     )
     # Data is delivered in pascals, tenths of degrees celsius, and tenths of meters per second.
     df = df.with_columns(
-        pl.col('air_pressure')/100
+        air_pressure=pl.col('air_pressure')/100,
+        air_temperature=pl.col('air_temperature')/10,
+        wind_speed=pl.col('wind_speed')/10,
     )
-    df = df.with_columns(
-        (pl.col('air_temperature')/10)
-    )
-    # Calculate dew point from dewpoint depression
-    df = df.with_columns(
-        (pl.col('air_temperature') - pl.col('dewpoint_depression')/10).alias('dew_point_temperature')
-    )
-    df = df.with_columns(
-        (pl.col('wind_speed')/10)
-    )
-
     # Calculate wind components
-    dir_rad = np.deg2rad(df['wind_from_direction'].to_numpy()) 
+    dir_rad = np.deg2rad(df['wind_from_direction'].to_numpy())
     u = -df['wind_speed']*np.sin(dir_rad)
     v = -df['wind_speed']*np.cos(dir_rad)
+    # Calculate dew point from dewpoint depression
     df = df.with_columns(
+        dew_point_temperature=(pl.col('air_temperature') - pl.col('dewpoint_depression')/10),
         eastward_wind=u,
         northward_wind=v
     )
@@ -107,17 +96,15 @@ def igra2_text_to_polars(header_line, data_lines):
     if 'elapsed_time' in df.columns:
         if release_time is not np.nan:
             df = df.with_columns(
-                                pl.when(pl.col('elapsed_time').is_not_nan())
+                                record_valid=pl.when(pl.col('elapsed_time').is_not_nan())
                                 .then(release_time + pl.duration(hours=pl.col('elapsed_time')//100, minutes=pl.col('elapsed_time')%100))
                                 .otherwise(pl.lit(None))
-                                .alias('record_valid')
                                 )
         else:
             df = df.with_columns(
-                                pl.when(pl.col('elapsed_time').is_not_nan())
+                                record_valid=pl.when(pl.col('elapsed_time').is_not_nan())
                                 .then(launch_valid_time + pl.duration(hours=pl.col('elapsed_time')//100, minutes=pl.col('elapsed_time')%100))
                                 .otherwise(pl.lit(None))
-                                .alias('record_valid')
                                 )
     else:
         if release_time is not np.nan:
@@ -199,7 +186,7 @@ if __name__ == '__main__':
     # Create container for final archive
     all_dfs = []
     # Read in data from all tar files in input_data/
-    input_path = 'input_data/'
+    input_path = 'input_data2/'
     for in_filename in sorted(listdir(input_path)):
         if not in_filename.endswith('.tar'):
             continue
